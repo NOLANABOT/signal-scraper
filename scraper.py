@@ -3,6 +3,7 @@ import json
 import threading
 from datetime import datetime
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 from supabase import create_client, Client
 from flask import Flask
 
@@ -10,14 +11,19 @@ from flask import Flask
 API_ID = '37547588'          
 API_HASH = 'eacf1dc4c35e5a45230da16e4fa58181'      
 
-# --- 2. YOUR SUPABASE CREDENTIALS ---
+# --- 2. YOUR STRING SESSION (CRITICAL FOR CLOUD) ---
+# Replace the text inside the quotes with the long string you generated locally!
+# It should look something like: "1BVtsOKcBu7T..." (very long)
+SESSION_STRING = "1BJWap1wBu8U0x4CDPzDHjdWTSI0xJrXmbTqHwelSeo8NJEPb-3wf5HNiHlnnmvlz2xZD9P9fCzd2KsGHaLteHZXUL38yQjzT1tkN-P88sU224PNve4HgGbtG32xdfrQzASScE0418USzSt0Vgsa5P6YPq-PvHH0cn93pBu7N3EwmLLg7jUc0la0JaTH52CY8zJ3M5IDLG9gZT_m-oKUbnZIIEC6XTcy0F9hVPUqqn2DZUq5HXzB6JBUIZEUvuEDablOpq39hma4EQ-AeRuAGkOooEFE5xRhwOpwpophQk1Puop5HPWsbKctmHz46A-OM7XMxzOcDOfCeGLxNglYZTX_hW3830ug="
+
+# --- 3. YOUR SUPABASE CREDENTIALS ---
 SUPABASE_URL = "https://zzritokppywwfgyxkcai.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp6cml0b2twcHl3d2ZneXhrY2FpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxNzg0OTksImV4cCI6MjEwNzc1NDQ5OX0.NeLz7eNzfEb9OKfAOhukp6P1tAAA20C5rGI2BHBrIZI"
 
 # Initialize Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# --- 3. YOUR TARGET CHANNELS/GROUPS ---
+# --- 4. YOUR TARGET CHANNELS/GROUPS ---
 TARGET_CHATS = [
     '@Binolla_Free_Trade_Binary_Signal',
     '@Olymp_Trade_Signals_Free_Binary',
@@ -25,26 +31,25 @@ TARGET_CHATS = [
     -1002250116987  # Micha Trader VIP private group
 ]
 
-# Initialize the Telegram client
-client = TelegramClient('signal_bot', API_ID, API_HASH)
+# Initialize the Telegram client USING THE STRING SESSION (No phone prompt!)
+client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
-# --- 4. TEMPORARY CACHE ---
+# --- 5. TEMPORARY CACHE ---
 pending_signal_ids = {} 
 
-# --- 5. KEEP-ALIVE WEB SERVER (For Render Free Tier) ---
+# --- 6. KEEP-ALIVE WEB SERVER (For Render Free Tier) ---
 app = Flask('')
 @app.route('/')
 def home():
     return "✅ Bot is running and listening to Telegram signals!"
 
 def run_web_server():
-    # Runs on port 8080, which Render expects
     app.run(host='0.0.0.0', port=8080)
 
-# Start the web server in a background thread so it doesn't block the scraper
+# Start the web server in a background thread
 threading.Thread(target=run_web_server, daemon=True).start()
 
-# --- 6. DATABASE FUNCTIONS ---
+# --- 7. DATABASE FUNCTIONS ---
 def insert_signal(data):
     try:
         response = supabase.table("signals").insert(data).execute()
@@ -74,7 +79,7 @@ def update_latest_result(group_name, status):
     except Exception as e:
         print(f"❌ Database Result Update Error: {e}")
 
-# --- 7. MAIN MESSAGE HANDLER ---
+# --- 8. MAIN MESSAGE HANDLER ---
 @client.on(events.NewMessage(chats=TARGET_CHATS))
 async def message_handler(event):
     text = event.raw_text
@@ -152,7 +157,7 @@ async def message_handler(event):
             insert_signal(payload)
             return
 
-# --- 8. START THE CLIENT ---
+# --- 9. START THE CLIENT ---
 print("🚀 Binary Options Signal Scraper Starting...")
 print("📡 Listening to 4 channels/groups...")
 print("🌐 Keep-alive web server running on port 8080...")
