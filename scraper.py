@@ -1,8 +1,10 @@
 import re
 import json
+import threading
 from datetime import datetime
 from telethon import TelegramClient, events
 from supabase import create_client, Client
+from flask import Flask
 
 # --- 1. YOUR TELEGRAM CREDENTIALS ---
 API_ID = '37547588'          
@@ -27,12 +29,23 @@ TARGET_CHATS = [
 client = TelegramClient('signal_bot', API_ID, API_HASH)
 
 # --- 4. TEMPORARY CACHE ---
-# Stores the database ID of the pending signal for each chat
 pending_signal_ids = {} 
 
-# --- 5. DATABASE FUNCTIONS ---
+# --- 5. KEEP-ALIVE WEB SERVER (For Render Free Tier) ---
+app = Flask('')
+@app.route('/')
+def home():
+    return "✅ Bot is running and listening to Telegram signals!"
+
+def run_web_server():
+    # Runs on port 8080, which Render expects
+    app.run(host='0.0.0.0', port=8080)
+
+# Start the web server in a background thread so it doesn't block the scraper
+threading.Thread(target=run_web_server, daemon=True).start()
+
+# --- 6. DATABASE FUNCTIONS ---
 def insert_signal(data):
-    """Inserts a new signal into the database and returns the new row's ID."""
     try:
         response = supabase.table("signals").insert(data).execute()
         new_id = response.data[0]['id']
@@ -43,19 +56,15 @@ def insert_signal(data):
         return None
 
 def update_signal(signal_id, update_data):
-    """Updates an existing signal in the database."""
     try:
-        response = supabase.table("signals").update(update_data).eq("id", signal_id).execute()
+        supabase.table("signals").update(update_data).eq("id", signal_id).execute()
         print("✅ Successfully updated signal in Database!")
     except Exception as e:
         print(f"❌ Database Update Error: {e}")
 
 def update_latest_result(group_name, status):
-    """Finds the latest active signal for a group and updates its status to WIN/LOSS."""
     try:
-        # Find the most recent signal for this group that is still PENDING or ACTIVE
         response = supabase.table("signals").select("id").eq("group_name", group_name).in_("status", ["PENDING", "ACTIVE"]).order("timestamp", desc=True).limit(1).execute()
-        
         if response.data and len(response.data) > 0:
             signal_id = response.data[0]['id']
             supabase.table("signals").update({"status": status}).eq("id", signal_id).execute()
@@ -65,7 +74,7 @@ def update_latest_result(group_name, status):
     except Exception as e:
         print(f"❌ Database Result Update Error: {e}")
 
-# --- 6. MAIN MESSAGE HANDLER ---
+# --- 7. MAIN MESSAGE HANDLER ---
 @client.on(events.NewMessage(chats=TARGET_CHATS))
 async def message_handler(event):
     text = event.raw_text
@@ -77,9 +86,7 @@ async def message_handler(event):
     if not text or len(text.strip()) < 5:
         return
 
-    # ==========================================
     # STEP 1: CHECK FOR RESULTS (WIN/LOSS)
-    # ==========================================
     is_win = bool(re.search(r'TRADE\s+WIN|TRADE\s+CLOSED\s+IN\s+PROFIT|PROFIT', text_upper))
     is_loss = bool(re.search(r'TRADE\s+LOSS|TRADE\s+CLOSED\s+IN\s+LOSS|LOSS', text_upper))
 
@@ -89,25 +96,19 @@ async def message_handler(event):
         update_latest_result(chat_title, status)
         return  
 
-    # ==========================================
     # STEP 2: CHECK FOR DIRECTION (Message 2 for Public Channels)
-    # ==========================================
     if chat_id != -1002250116987:  
         if re.search(r'\b(CALL|PUT|BUY|SELL|UP|DOWN)\b', text_upper) or '🟢' in text or '🔴' in text:
             if chat_id in pending_signal_ids:
                 signal_id = pending_signal_ids.pop(chat_id)
-                
                 direction = "UP" if re.search(r'CALL|BUY|UP|🟢', text_upper) else "DOWN"
-                
                 print(f"🔔 Direction detected: {direction}. Updating signal ID {signal_id}...")
                 update_signal(signal_id, {"direction": direction, "status": "ACTIVE"})
                 return
             else:
                 return  
 
-    # ==========================================
     # STEP 3: CHECK FOR SIGNAL PART 1 (Public Channels)
-    # ==========================================
     if chat_id != -1002250116987:
         asset_match = re.search(r'([A-Z]{3,}/[A-Z]{3,}|[A-Z]{4,6})\s*\(?\s*OTC\s*\)?', text_upper)
         expiry_match = re.search(r'(\d+)\s*(MINUTE|MINUTES|MIN)\b', text_upper)
@@ -130,16 +131,13 @@ async def message_handler(event):
                 pending_signal_ids[chat_id] = new_id
             return
 
-    # ==========================================
     # STEP 4: CHECK FOR PRIVATE CHANNEL (Micha Trader)
-    # ==========================================
     else:
         asset_match = re.search(r'([A-Z]{3,}/[A-Z]{3,}|[A-Z]{4,6})\s*OTC', text_upper)
         expiry_match = re.search(r'(\d+)\s*(MIN|MINUTE|MINUTES)\b', text_upper)
 
         if asset_match:
             direction = "DOWN" if re.search(r'SELL|PUT|DOWN|🔴', text_upper) else "UP"
-                
             payload = {
                 "group_name": chat_title,
                 "type": "SIGNAL",
@@ -154,9 +152,10 @@ async def message_handler(event):
             insert_signal(payload)
             return
 
-# --- 7. START THE CLIENT ---
+# --- 8. START THE CLIENT ---
 print("🚀 Binary Options Signal Scraper Starting...")
 print("📡 Listening to 4 channels/groups...")
+print("🌐 Keep-alive web server running on port 8080...")
 print("=" * 50)
 
 client.start()
